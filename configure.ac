@@ -67,14 +67,8 @@ AC_ARG_WITH([cuda-libpath],
 
 AC_ARG_WITH([rocm],
             [AS_HELP_STRING([--with-rocm=@<:@ROCm installation path@:>@],
-                            [Provide path to ROCm installation])
-            ],
-            [AS_CASE([$with_rocm],
-                     [yes|no], [],
-                     [CPPFLAGS="-I$with_rocm/include/hip $CPPFLAGS"
-                      LDFLAGS="-L$with_rocm/lib -Wl,-rpath=$with_rocm/lib $LDFLAGS"])
-            ],
-            [with_rocm=no])
+                            [Provide path to ROCm installation to enable ROCm support])],
+            [], [with_rocm=no])
 
 # Checks for programs.
 AC_PROG_CC([mpicc oshcc upcc upc++])
@@ -145,7 +139,14 @@ AS_IF([test "x$build_cuda_kernels" = xyes], [
        AC_DEFINE([_ENABLE_CUDA_KERNEL_], [1], [Enable CUDA Kernel])
        ])
 
-AS_IF([test "x$with_rocm" != "xno"], [
+AS_IF([test "x$with_rocm" != "xno"],
+      [AS_CASE(["x$with_rocm"],
+          [x|xyes|xguess],
+              [with_rocm=/opt/rocm])
+
+       CPPFLAGS="-I$with_rocm/include/hip $CPPFLAGS"
+       LDFLAGS="-L$with_rocm/lib -Wl,-rpath=$with_rocm/lib $LDFLAGS"
+
        AC_SEARCH_LIBS([hipFree], [hip_hcc], [],
                       [AC_MSG_ERROR([Unable to link with libhip_hcc!])])
        AC_DEFINE([__HIP_PLATFORM_HCC__])
