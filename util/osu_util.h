@@ -295,8 +295,6 @@ struct options_t {
 
     char src;
     char dst;
-    int src_gpu;
-    int dst_gpu;
     int num_threads;
     char managedSend;
     char managedRecv;

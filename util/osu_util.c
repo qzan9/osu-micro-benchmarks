@@ -712,8 +712,6 @@ int process_options (int argc, char *argv[])
 
     options.src = 'H';
     options.dst = 'H';
-    options.src_gpu = 0;
-    options.dst_gpu = 0; 
 
     switch (options.subtype) {
         case BW:
@@ -981,18 +979,6 @@ int process_options (int argc, char *argv[])
                 setAccel(options.dst);
             }
         }
-#ifdef _ENABLE_ROCM_
-        else if ((optind + 4) == argc) {
-            options.src = argv[optind][0];
-            options.dst = argv[optind + 1][0];
-            if (NONE == options.accel) {
-                setAccel(options.src);
-                setAccel(options.dst);
-            }
-            options.src_gpu = atoi(argv[optind + 2]);
-            options.dst_gpu = atoi(argv[optind + 3]);
-        }
-#endif
         else if (optind != argc) {
             return PO_BAD_USAGE;
         }
@@ -1766,7 +1752,7 @@ void free_buffer (void * buffer, enum accel_type type)
     }
 }
 
-#if defined(_ENABLE_OPENACC_) || defined(_ENABLE_CUDA_)
+#if defined(_ENABLE_OPENACC_) || defined(_ENABLE_CUDA_) || defined(_ENABLE_ROCM_)
 int omb_get_local_rank()
 {
     char *str = NULL;
@@ -1786,7 +1772,7 @@ int omb_get_local_rank()
 
     return local_rank;
 }
-#endif /* defined(_ENABLE_OPENACC_) || defined(_ENABLE_CUDA_) */
+#endif /* defined(_ENABLE_OPENACC_) || defined(_ENABLE_CUDA_) || defined(_ENABLE_ROCM_) */
 
 int init_accel (void)
 {
@@ -1794,7 +1780,7 @@ int init_accel (void)
     CUresult curesult = CUDA_SUCCESS;
     CUdevice cuDevice;
 #endif
-#if defined(_ENABLE_OPENACC_) || defined(_ENABLE_CUDA_)
+#if defined(_ENABLE_OPENACC_) || defined(_ENABLE_CUDA_) || defined(_ENABLE_ROCM_)
     int local_rank = -1, dev_count = 0;
     int dev_id = 0;
 
@@ -1828,6 +1814,15 @@ int init_accel (void)
 #endif
 #ifdef _ENABLE_ROCM_
         case ROCM:
+            if (local_rank >= 0) {
+                HIP_CHECK(hipGetDeviceCount(&dev_count));
+                dev_id = local_rank % dev_count;
+            }
+
+            HIP_CHECK(hipInit(0));
+
+            HIP_CHECK(hipSetDevice(dev_id));
+
             break;
 #endif
 #ifdef _ENABLE_OPENACC_

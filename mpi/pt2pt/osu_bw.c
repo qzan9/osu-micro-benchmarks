@@ -40,14 +40,6 @@ main (int argc, char *argv[])
     MPI_CHECK(MPI_Comm_size(MPI_COMM_WORLD, &numprocs));
     MPI_CHECK(MPI_Comm_rank(MPI_COMM_WORLD, &myid));
 
-#ifdef _ENABLE_ROCM_    // ugly codes
-    if (0 == myid) {
-        HIP_CHECK(hipSetDevice(options.src_gpu));
-    } else {
-        HIP_CHECK(hipSetDevice(options.dst_gpu));
-    }
-#endif
-
     if (0 == myid) {
         switch (po_ret) {
             case PO_CUDA_NOT_AVAIL:
