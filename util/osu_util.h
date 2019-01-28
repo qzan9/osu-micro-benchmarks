@@ -29,11 +29,13 @@
 #include <sys/time.h>
 #include <limits.h>
 
-
-
 #ifdef _ENABLE_CUDA_
 #include "cuda.h"
 #include "cuda_runtime.h"
+#endif
+
+#ifdef _ENABLE_ROCM_
+#include "hip_runtime_api.h"
 #endif
 
 #define MIN(a,b) ((a)<(b)?(a):(b))
@@ -58,6 +60,12 @@
 #   define CUDA_KERNEL_ENABLED 0
 #endif
 
+#ifdef _ENABLE_ROCM_
+#   define ROCM_ENABLED 1
+#else
+#   define ROCM_ENABLED 0
+#endif
+
 #ifndef BENCHMARK
 #   define BENCHMARK "MPI%s BENCHMARK NAME UNSET"
 #endif
@@ -80,7 +88,8 @@
 
 #define CHECK(stmt)                                              \
 do {                                                             \
-   int errno = (stmt);                                           \
+   int errno;                                                    \
+   errno = (stmt);                                               \
    if (0 != errno) {                                             \
        fprintf(stderr, "[%s:%d] function call failed with %d \n",\
         __FILE__, __LINE__, errno);                              \
@@ -91,7 +100,8 @@ do {                                                             \
 
 #define MPI_CHECK(stmt)                                          \
 do {                                                             \
-   int mpi_errno = (stmt);                                       \
+   int mpi_errno;                                                \
+   mpi_errno = (stmt);                                           \
    if (MPI_SUCCESS != mpi_errno) {                               \
        fprintf(stderr, "[%s:%d] MPI call failed with %d \n",     \
         __FILE__, __LINE__,mpi_errno);                           \
@@ -103,13 +113,28 @@ do {                                                             \
 #if defined(_ENABLE_CUDA_)
 #define CUDA_CHECK(stmt)                                                \
 do {                                                                    \
-   int errno = (stmt);                                                  \
+   int errno;                                                           \
+   errno = (stmt);                                                      \
    if (0 != errno) {                                                    \
        fprintf(stderr, "[%s:%d] CUDA call '%s' failed with %d: %s \n",  \
         __FILE__, __LINE__, #stmt, errno, cudaGetErrorString(errno));   \
        exit(EXIT_FAILURE);                                              \
    }                                                                    \
    assert(cudaSuccess == errno);                                        \
+} while (0)
+#endif
+
+#if defined(_ENABLE_ROCM_)
+#define HIP_CHECK(stmt)                                                     \
+do {                                                                        \
+    hipError_t hip_errno;                                                   \
+    hip_errno = (stmt);                                                     \
+    if (hip_errno != hipSuccess) {                                          \
+       fprintf(stderr, "[%s:%d] HIP call '%s' failed with 0x%x: %s \n",     \
+        __FILE__, __LINE__, #stmt, hip_errno, hipGetErrorString(hip_errno));\
+       exit(EXIT_FAILURE);                                                  \
+    }                                                                       \
+    assert(hipSuccess == hip_errno);                                        \
 } while (0)
 #endif
 
@@ -178,6 +203,7 @@ enum mpi_req{
 
 enum po_ret_type {
     PO_CUDA_NOT_AVAIL,
+    PO_ROCM_NOT_AVAIL,
     PO_OPENACC_NOT_AVAIL,
     PO_BAD_USAGE,
     PO_HELP_MESSAGE,
@@ -188,6 +214,7 @@ enum po_ret_type {
 enum accel_type {
     NONE,
     CUDA,
+    ROCM,
     OPENACC,
     MANAGED
 };
@@ -268,6 +295,8 @@ struct options_t {
 
     char src;
     char dst;
+    int src_gpu;
+    int dst_gpu;
     int num_threads;
     char managedSend;
     char managedRecv;

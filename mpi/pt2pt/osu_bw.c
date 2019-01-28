@@ -40,11 +40,23 @@ main (int argc, char *argv[])
     MPI_CHECK(MPI_Comm_size(MPI_COMM_WORLD, &numprocs));
     MPI_CHECK(MPI_Comm_rank(MPI_COMM_WORLD, &myid));
 
+#ifdef _ENABLE_ROCM_    // ugly codes
+    if (0 == myid) {
+        HIP_CHECK(hipSetDevice(options.src_gpu));
+    } else {
+        HIP_CHECK(hipSetDevice(options.dst_gpu));
+    }
+#endif
+
     if (0 == myid) {
         switch (po_ret) {
             case PO_CUDA_NOT_AVAIL:
                 fprintf(stderr, "CUDA support not enabled.  Please recompile "
                         "benchmark with CUDA support.\n");
+                break;
+            case PO_ROCM_NOT_AVAIL:
+                fprintf(stderr, "ROCM support not enabled.  Please recompile "
+                        "benchmark with ROCM support.\n");
                 break;
             case PO_OPENACC_NOT_AVAIL:
                 fprintf(stderr, "OPENACC support not enabled.  Please "
@@ -67,6 +79,7 @@ main (int argc, char *argv[])
 
     switch (po_ret) {
         case PO_CUDA_NOT_AVAIL:
+        case PO_ROCM_NOT_AVAIL:
         case PO_OPENACC_NOT_AVAIL:
         case PO_BAD_USAGE:
             MPI_CHECK(MPI_Finalize());

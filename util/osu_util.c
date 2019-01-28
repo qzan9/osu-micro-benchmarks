@@ -91,6 +91,9 @@ print_header(int rank, int full)
                     case CUDA:
                         printf(benchmark_header, "-CUDA");
                         break;
+                    case ROCM:
+                        printf(benchmark_header, "-ROCm");
+                        break;
                     case OPENACC:
                         printf(benchmark_header, "-OPENACC");
                         break;
@@ -101,6 +104,7 @@ print_header(int rank, int full)
 
                 switch (options.accel) {
                     case CUDA:
+                    case ROCM:
                     case OPENACC:
                         fprintf(stdout, "# Send Buffer on %s and Receive Buffer on %s\n",
                                'M' == options.src ? "MANAGED (M)" : ('D' == options.src ? "DEVICE (D)" : "HOST (H)"),
@@ -210,6 +214,9 @@ void print_header_one_sided (int rank, enum WINDOW win, enum SYNC sync)
             case CUDA:
                 printf(benchmark_header, "-CUDA");
                 break;
+            case ROCM:
+                printf(benchmark_header, "-ROCm");
+                break;
             case OPENACC:
                 printf(benchmark_header, "-OPENACC");
                 break;
@@ -224,6 +231,7 @@ void print_header_one_sided (int rank, enum WINDOW win, enum SYNC sync)
 
         switch (options.accel) {
             case CUDA:
+            case ROCM:
             case OPENACC:
                 fprintf(stdout, "# Rank 0 Memory on %s and Rank 1 Memory on %s\n",
                        'M' == options.src ? "MANAGED (M)" : ('D' == options.src ? "DEVICE (D)" : "HOST (H)"),
@@ -381,6 +389,11 @@ void set_device_memory (void * ptr, int data, size_t size)
             CUDA_CHECK(cudaMemset(ptr, data, size));
             break;
 #endif
+#ifdef _ENABLE_ROCM_
+        case ROCM:
+            HIP_CHECK(hipMemset(ptr, data, size));
+            break;
+#endif
 #ifdef _ENABLE_OPENACC_
         case OPENACC:
 #pragma acc parallel copyin(size) deviceptr(p)
@@ -400,6 +413,11 @@ int free_device_buffer (void * buf)
 #ifdef _ENABLE_CUDA_
         case CUDA:
             CUDA_CHECK(cudaFree(buf));
+            break;
+#endif
+#ifdef _ENABLE_ROCM_
+        case ROCM:
+            HIP_CHECK(hipFree(buf));
             break;
 #endif
 #ifdef _ENABLE_OPENACC_
@@ -459,7 +477,7 @@ void set_benchmark_name (const char * name)
 
 void enable_accel_support (void)
 {
-    accel_enabled = (CUDA_ENABLED || OPENACC_ENABLED);
+    accel_enabled = (CUDA_ENABLED || ROCM_ENABLED || OPENACC_ENABLED);
 }
 
 void usage_one_sided (char const * name)
@@ -476,7 +494,7 @@ void usage_one_sided (char const * name)
     fprintf(stdout, "Options:\n");
 
     fprintf(stdout, "  -d --accelerator <type>       accelerator device buffers can be of <type> "
-                   "`cuda' or `openacc'\n");
+                   "`cuda', `rocm' or `openacc'\n");
     fprintf(stdout, "\n");
 
 #if MPI_VERSION >= 3
@@ -694,6 +712,8 @@ int process_options (int argc, char *argv[])
 
     options.src = 'H';
     options.dst = 'H';
+    options.src_gpu = 0;
+    options.dst_gpu = 0; 
 
     switch (options.subtype) {
         case BW:
@@ -855,7 +875,16 @@ int process_options (int argc, char *argv[])
                         bad_usage.optarg = optarg;
                         return PO_BAD_USAGE;
                     }
-                } else if (0 == strncasecmp(optarg, "openacc", 10)) {
+                } else if (0 == strncasecmp(optarg, "rocm", 10)) {
+                    if (ROCM_ENABLED) {
+                        options.accel = ROCM;
+                    } else {
+                        bad_usage.message = "ROCm Support Not Enabled\n"
+                                "Please recompile benchmark with ROCm support";
+                        bad_usage.optarg = optarg;
+                        return PO_BAD_USAGE;
+                    }
+                 } else if (0 == strncasecmp(optarg, "openacc", 10)) {
                     if (OPENACC_ENABLED) {
                         options.accel = OPENACC;
                     } else {
@@ -951,7 +980,20 @@ int process_options (int argc, char *argv[])
                 setAccel(options.src);
                 setAccel(options.dst);
             }
-        } else if (optind != argc) {
+        }
+#ifdef _ENABLE_ROCM_
+        else if ((optind + 4) == argc) {
+            options.src = argv[optind][0];
+            options.dst = argv[optind + 1][0];
+            if (NONE == options.accel) {
+                setAccel(options.src);
+                setAccel(options.dst);
+            }
+            options.src_gpu = atoi(argv[optind + 2]);
+            options.dst_gpu = atoi(argv[optind + 3]);
+        }
+#endif
+        else if (optind != argc) {
             return PO_BAD_USAGE;
         }
     }
@@ -972,10 +1014,12 @@ int setAccel(char buf_type) {
                 return PO_BAD_USAGE;
             }
             if (NONE == options.accel) {
-#if defined(_ENABLE_OPENACC_) && !defined(_ENABLE_CUDA_)
+#if defined(_ENABLE_OPENACC_) && !defined(_ENABLE_CUDA_) && !defined(_ENABLE_ROCM_)
                 options.accel = OPENACC;
-#else
+#elif defined(_ENABLE_CUDA_)
                 options.accel = CUDA;
+#elif defined(_ENABLE_ROCM_)
+                options.accel = ROCM;
 #endif
             }
             break;
@@ -1002,7 +1046,7 @@ void print_help_message (int rank)
     }
 
     if (accel_enabled && (options.subtype != LAT_MT)) {
-        fprintf(stdout, "  -d, --accelerator  TYPE     use accelerator device buffers, which can be of TYPE `cuda', \n");
+        fprintf(stdout, "  -d, --accelerator  TYPE     use accelerator device buffers, which can be of TYPE `cuda', `rocm', \n");
         fprintf(stdout, "                              `managed' or `openacc' (uses standard host buffers if not specified)\n");
     }
 
@@ -1108,6 +1152,9 @@ void print_version_message (int rank)
         case CUDA:
             printf(benchmark_header, "-CUDA");
             break;
+        case ROCM:
+            printf(benchmark_header, "-ROCm");
+            break;
         case OPENACC:
             printf(benchmark_header, "-OPENACC");
             break;
@@ -1199,6 +1246,9 @@ void print_preamble (int rank)
     switch (options.accel) {
         case CUDA:
             printf(benchmark_header, "-CUDA");
+            break;
+        case ROCM:
+            printf(benchmark_header, "-ROCm");
             break;
         case OPENACC:
             printf(benchmark_header, "-OPENACC");
@@ -1392,6 +1442,11 @@ void set_buffer_pt2pt (void * buffer, int rank, enum accel_type type, int data, 
                 CUDA_CHECK(cudaMemset(buffer, data, size));
             }
 #endif
+#ifdef _ENABLE_ROCM_
+            {
+               HIP_CHECK(hipMemset(buffer, data, size));
+            }
+#endif
             break;
     }
 }
@@ -1410,6 +1465,11 @@ void set_buffer (void * buffer, enum accel_type type, int data, size_t size)
         case MANAGED:
 #ifdef _ENABLE_CUDA_
             CUDA_CHECK(cudaMemset(buffer, data, size));
+#endif
+            break;
+        case ROCM:
+#ifdef _ENABLE_ROCM_
+            HIP_CHECK(hipMemset(buffer, data, size));
 #endif
             break;
         case OPENACC:
@@ -1464,6 +1524,11 @@ int allocate_device_buffer (char ** buffer)
              CUDA_CHECK(cudaMalloc((void **)buffer, options.max_message_size));
             break;
 #endif
+#ifdef _ENABLE_ROCM_
+        case ROCM:
+            HIP_CHECK(hipMalloc((void **)buffer, options.max_message_size));
+            break;
+#endif
 #ifdef _ENABLE_OPENACC_
         case OPENACC:
             *buffer = acc_malloc(options.max_message_size);
@@ -1490,6 +1555,11 @@ int allocate_device_buffer_one_sided (char ** buffer, size_t size)
             break;
         case MANAGED:
             CUDA_CHECK(cudaMallocManaged((void **)buffer, size, cudaMemAttachGlobal));
+            break;
+#endif
+#ifdef _ENABLE_ROCM_
+        case ROCM:
+            HIP_CHECK(hipMalloc((void **)buffer, size));
             break;
 #endif
 #ifdef _ENABLE_OPENACC_
@@ -1533,12 +1603,12 @@ int allocate_memory_pt2pt (char ** sbuf, char ** rbuf, int rank)
         case 0:
             if ('D' == options.src) {
                 if (allocate_device_buffer(sbuf)) {
-                    fprintf(stderr, "Error allocating cuda memory\n");
+                    fprintf(stderr, "Error allocating device memory\n");
                     return 1;
                 }
 
                 if (allocate_device_buffer(rbuf)) {
-                    fprintf(stderr, "Error allocating cuda memory\n");
+                    fprintf(stderr, "Error allocating device memory\n");
                     return 1;
                 }
             } else if ('M' == options.src) {
@@ -1566,12 +1636,12 @@ int allocate_memory_pt2pt (char ** sbuf, char ** rbuf, int rank)
         case 1:
             if ('D' == options.dst) {
                 if (allocate_device_buffer(sbuf)) {
-                    fprintf(stderr, "Error allocating cuda memory\n");
+                    fprintf(stderr, "Error allocating device memory\n");
                     return 1;
                 }
 
                 if (allocate_device_buffer(rbuf)) {
-                    fprintf(stderr, "Error allocating cuda memory\n");
+                    fprintf(stderr, "Error allocating device memory\n");
                     return 1;
                 }
             } else if ('M' == options.dst) {
@@ -1672,6 +1742,11 @@ void free_buffer (void * buffer, enum accel_type type)
             CUDA_CHECK(cudaFree(buffer));
 #endif
             break;
+        case ROCM:
+#ifdef _ENABLE_ROCM_
+            HIP_CHECK(hipFree(buffer));
+#endif
+            break;
         case OPENACC:
 #ifdef _ENABLE_OPENACC_
             acc_free(buffer);
@@ -1751,6 +1826,10 @@ int init_accel (void)
             }
             break;
 #endif
+#ifdef _ENABLE_ROCM_
+        case ROCM:
+            break;
+#endif
 #ifdef _ENABLE_OPENACC_
         case OPENACC:
             if (local_rank >= 0) {
@@ -1763,7 +1842,7 @@ int init_accel (void)
             break;
 #endif
         default:
-            fprintf(stderr, "Invalid device type, should be cuda or openacc\n");
+            fprintf(stderr, "Invalid device type, should be cuda, rocm or openacc\n");
             return 1;
     }
 
@@ -1785,6 +1864,10 @@ int cleanup_accel (void)
             if (curesult != CUDA_SUCCESS) {
                 return 1;
             }
+            break;
+#endif
+#ifdef _ENABLE_ROCM_
+        case ROCM:
             break;
 #endif
 #ifdef _ENABLE_OPENACC_
