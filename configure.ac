@@ -29,10 +29,10 @@ AC_ARG_ENABLE([openacc],
 
 AC_ARG_ENABLE([cuda],
               [AS_HELP_STRING([--enable-cuda],
-			      [Enable CUDA benchmarks (default is no).  Specify
-			       --enable-cuda=basic to enable basic cuda support
-			       without using cuda kernel support for
-			       non-blocking collectives])
+                              [Enable CUDA benchmarks (default is no).  Specify
+                               --enable-cuda=basic to enable basic cuda support
+                               without using cuda kernel support for
+                               non-blocking collectives])
               ],
               [],
               [enable_cuda=no])
@@ -48,7 +48,7 @@ AC_ARG_WITH([cuda],
             ])
 
 AC_ARG_WITH([cuda-include],
-            [AS_HELP_STRING([--with-cuda-include=@<:@CUDA include path@>:@],
+            [AS_HELP_STRING([--with-cuda-include=@<:@CUDA include path@:>@],
                             [Provide path to CUDA include files])
             ],
             [AS_CASE([$with_cuda_include],
@@ -57,13 +57,24 @@ AC_ARG_WITH([cuda-include],
             ])
 
 AC_ARG_WITH([cuda-libpath],
-            [AS_HELP_STRING([--with-cuda-libpath=@<:@CUDA library path@>:@],
+            [AS_HELP_STRING([--with-cuda-libpath=@<:@CUDA library path@:>@],
                             [Provide path to CUDA library files])
             ],
             [AS_CASE([$with_cuda_libpath],
                      [yes|no], [],
                      [LDFLAGS="-L$with_cuda_libpath -Wl,-rpath=$with_cuda_libpath $LDFLAGS"])
             ])
+
+AC_ARG_WITH([rocm],
+            [AS_HELP_STRING([--with-rocm=@<:@ROCm installation path@:>@],
+                            [Provide path to ROCm installation])
+            ],
+            [AS_CASE([$with_rocm],
+                     [yes|no], [],
+                     [CPPFLAGS="-I$with_rocm/include/hip $CPPFLAGS"
+                      LDFLAGS="-L$with_rocm/lib -Wl,-rpath=$with_rocm/lib $LDFLAGS"])
+            ],
+            [with_rocm=no])
 
 # Checks for programs.
 AC_PROG_CC([mpicc oshcc upcc upc++])
@@ -134,9 +145,19 @@ AS_IF([test "x$build_cuda_kernels" = xyes], [
        AC_DEFINE([_ENABLE_CUDA_KERNEL_], [1], [Enable CUDA Kernel])
        ])
 
+AS_IF([test "x$with_rocm" != "xno"], [
+       AC_SEARCH_LIBS([hipFree], [hip_hcc], [],
+                      [AC_MSG_ERROR([Unable to link with libhip_hcc!])])
+       AC_DEFINE([__HIP_PLATFORM_HCC__])
+       AC_CHECK_HEADERS([hip_runtime_api.h], [],
+                        [AC_MSG_ERROR([Unable to include hip_runtime_api.h!])])
+       AC_DEFINE([_ENABLE_ROCM_], [1], [Enable ROCm])
+       ])
+
 AS_IF([test "x$oshm_13_library" = xtrue], [
        AC_DEFINE([OSHM_1_3], [1], [Enable OpenSHMEM 1.3 features])
        ])
+
 AM_CONDITIONAL([MPI2_LIBRARY], [test x$mpi2_library = xtrue])
 AM_CONDITIONAL([MPI3_LIBRARY], [test x$mpi3_library = xtrue])
 AM_CONDITIONAL([CUDA], [test x$build_cuda = xyes])
