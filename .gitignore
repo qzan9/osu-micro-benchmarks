@@ -1,0 +1,6 @@
+Makefile.in
+*.deps
+*.Po
+*.dirstamp
+
+*.o
