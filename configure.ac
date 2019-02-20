@@ -144,7 +144,7 @@ AS_IF([test "x$with_rocm" != "xno"],
           [x|xyes|xguess],
               [with_rocm=/opt/rocm])
 
-       CPPFLAGS="-I$with_rocm/include/hip $CPPFLAGS"
+       CPPFLAGS="-I$with_rocm/include -I$with_rocm/include/hip $CPPFLAGS"
        LDFLAGS="-L$with_rocm/lib -Wl,-rpath=$with_rocm/lib $LDFLAGS"
 
        AC_SEARCH_LIBS([hipFree], [hip_hcc], [],
