@@ -549,13 +549,16 @@ void usage_mbw_mr() {
     fprintf(stdout, "  -V, --vary-window              Vary the window size (default no)\n");
     fprintf(stdout, "                                 [cannot be used with -W]\n");
     if (options.show_size) {
-        fprintf(stdout, "  -m, --message-size          [MIN:]MAX  set the minimum and/or the maximum message size to MIN and/or MAX\n");
-        fprintf(stdout, "                              bytes respectively. Examples:\n");
-        fprintf(stdout, "                              -m 128      // min = default, max = 128\n");
-        fprintf(stdout, "                              -m 2:128    // min = 2, max = 128\n");
-        fprintf(stdout, "                              -m 2:       // min = 2, max = default\n");
-        fprintf(stdout, "  -M, --mem-limit SIZE        set per process maximum memory consumption to SIZE bytes\n");
-        fprintf(stdout, "                              (default %d)\n", MAX_MEM_LIMIT);
+        fprintf(stdout, "  -m, --message-size             [MIN:]MAX  set the minimum and/or the maximum message size to MIN and/or MAX\n");
+        fprintf(stdout, "                                 bytes respectively. Examples:\n");
+        fprintf(stdout, "                                 -m 128      // min = default, max = 128\n");
+        fprintf(stdout, "                                 -m 2:128    // min = 2, max = 128\n");
+        fprintf(stdout, "                                 -m 2:       // min = 2, max = default\n");
+        fprintf(stdout, "  -M, --mem-limit SIZE           set per process maximum memory consumption to SIZE bytes\n");
+        fprintf(stdout, "                                 (default %d)\n", MAX_MEM_LIMIT);
+    }
+    if (accel_enabled) {
+        fprintf(stdout, "  -d --accelerator <type>        accelerator device buffers can be of <type> `cuda', `rocm' or `openacc'\n");
     }
     fprintf(stdout, "  -h, --help                     Print this help\n");
     fprintf(stdout, "\n");
@@ -681,9 +684,12 @@ int process_options (int argc, char *argv[])
 #else
         optstring = (accel_enabled) ? "+:s:hvm:d:x:i:" : "+s:hvm:x:i:";
 #endif
-    } else if (options.bench == MBW_MR){
-        optstring = "p:W:R:x:i:m:d:Vhv";
-        accel_enabled = 0;
+    } else if (options.bench == MBW_MR) {
+        if (accel_enabled) {
+            optstring = "p:W:R:x:i:m:d:Vhv";
+	} else {
+            optstring = "p:W:R:x:i:m:Vhv";
+	}
     } else if (options.bench == OSHM || options.bench == UPC || options.bench == UPCXX) {
         optstring = ":hvfm:i:M:";
     } else {
@@ -994,9 +1000,9 @@ int setAccel(char buf_type) {
             break;
         case 'D':
         case 'M':
-            if (options.bench != PT2PT && options.bench != ONE_SIDED) {
+            if (options.bench != PT2PT && options.bench != MBW_MR && options.bench != ONE_SIDED) {
                 bad_usage.opt = buf_type;
-                bad_usage.message = "This argument is only supported for one-sided and pt2pt benchmarks";
+                bad_usage.message = "This argument is only supported for pt2pt, mbw_mr and one-sided benchmarks";
                 return PO_BAD_USAGE;
             }
             if (NONE == options.accel) {
@@ -1437,6 +1443,41 @@ void set_buffer_pt2pt (void * buffer, int rank, enum accel_type type, int data, 
     }
 }
 
+void set_buffer_mbw_mr (void * buffer, int rank, int num_pairs, enum accel_type type, int data, size_t size)
+{
+    char buf_type = (rank < num_pairs) ? options.src : options.dst;
+
+    switch (buf_type) {
+        case 'H':
+            memset(buffer, data, size);
+            break;
+        case 'D':
+        case 'M':
+#ifdef _ENABLE_OPENACC_
+            if (type == OPENACC) {
+                size_t i;
+                char * p = (char *)buffer;
+                #pragma acc parallel loop deviceptr(p)
+                for (i = 0; i < size; i++) {
+                    p[i] = data;
+                }
+                break;
+            } else
+#endif
+#ifdef _ENABLE_CUDA_
+            {
+                CUDA_CHECK(cudaMemset(buffer, data, size));
+            }
+#endif
+#ifdef _ENABLE_ROCM_
+            {
+               HIP_CHECK(hipMemset(buffer, data, size));
+            }
+#endif
+            break;
+    }
+}
+
 void set_buffer (void * buffer, enum accel_type type, int data, size_t size)
 {
 #ifdef _ENABLE_OPENACC_
@@ -1652,6 +1693,79 @@ int allocate_memory_pt2pt (char ** sbuf, char ** rbuf, int rank)
                 }
             }
             break;
+    }
+
+    return 0;
+}
+
+int allocate_memory_mbw_mr (char ** sbuf, char ** rbuf, int rank, int num_pairs)
+{
+    unsigned long align_size = sysconf(_SC_PAGESIZE);
+
+    if (rank < num_pairs) {
+        if ('D' == options.src) {
+            if (allocate_device_buffer(sbuf)) {
+                fprintf(stderr, "Error allocating device memory\n");
+                return 1;
+            }
+
+            if (allocate_device_buffer(rbuf)) {
+                fprintf(stderr, "Error allocating device memory\n");
+                return 1;
+            }
+        } else if ('M' == options.src) {
+            if (allocate_managed_buffer(sbuf)) {
+                fprintf(stderr, "Error allocating cuda unified memory\n");
+                return 1;
+            }
+
+            if (allocate_managed_buffer(rbuf)) {
+                fprintf(stderr, "Error allocating cuda unified memory\n");
+                return 1;
+            }
+        } else {
+            if (posix_memalign((void**)sbuf, align_size, options.max_message_size)) {
+                fprintf(stderr, "Error allocating host memory\n");
+                return 1;
+            }
+
+            if (posix_memalign((void**)rbuf, align_size, options.max_message_size)) {
+                fprintf(stderr, "Error allocating host memory\n");
+                return 1;
+            }
+        }
+    } else {
+        if ('D' == options.dst) {
+            if (allocate_device_buffer(sbuf)) {
+                fprintf(stderr, "Error allocating device memory\n");
+                return 1;
+            }
+
+            if (allocate_device_buffer(rbuf)) {
+                fprintf(stderr, "Error allocating device memory\n");
+                return 1;
+            }
+        } else if ('M' == options.dst) {
+            if (allocate_managed_buffer(sbuf)) {
+                fprintf(stderr, "Error allocating cuda unified memory\n");
+                return 1;
+            }
+
+            if (allocate_managed_buffer(rbuf)) {
+                fprintf(stderr, "Error allocating cuda unified memory\n");
+                return 1;
+            }
+        } else {
+            if (posix_memalign((void**)sbuf, align_size, options.max_message_size)) {
+                fprintf(stderr, "Error allocating host memory\n");
+                return 1;
+            }
+
+            if (posix_memalign((void**)rbuf, align_size, options.max_message_size)) {
+                fprintf(stderr, "Error allocating host memory\n");
+                return 1;
+            }
+        }
     }
 
     return 0;
@@ -1934,6 +2048,27 @@ void free_memory (void * sbuf, void * rbuf, int rank)
                 free(rbuf);
             }
             break;
+    }
+}
+
+void free_memory_mbw_mr (void * sbuf, void * rbuf, int rank, int num_pairs)
+{
+    if (rank < num_pairs) {
+        if ('D' == options.src || 'M' == options.src) {
+            free_device_buffer(sbuf);
+            free_device_buffer(rbuf);
+        } else {
+            free(sbuf);
+            free(rbuf);
+        }
+    } else {
+        if ('D' == options.dst || 'M' == options.dst) {
+            free_device_buffer(sbuf);
+            free_device_buffer(rbuf);
+        } else {
+            free(sbuf);
+            free(rbuf);
+        }
     }
 }
 

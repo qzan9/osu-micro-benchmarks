@@ -1,7 +1,7 @@
 #define BENCHMARK "OSU MPI Multiple Bandwidth / Message Rate Test"
 /*
  * Copyright (C) 2002-2018 the Network-Based Computing Laboratory
- * (NBCL), The Ohio State University. 
+ * (NBCL), The Ohio State University.
  *
  * Contact: Dr. D. K. Panda (panda@cse.ohio-state.edu)
  *
@@ -31,38 +31,30 @@ int main(int argc, char *argv[])
     unsigned long align_size = sysconf(_SC_PAGESIZE);
     int numprocs, rank;
     int c, curr_size;
+    int po_ret;
 
     loop_override = 0;
     skip_override = 0;
 
     options.bench = MBW_MR;
     options.subtype = BW;
-    
+
     MPI_CHECK(MPI_Init(&argc, &argv));
 
     MPI_CHECK(MPI_Comm_size(MPI_COMM_WORLD, &numprocs));
     MPI_CHECK(MPI_Comm_rank(MPI_COMM_WORLD, &rank));
 
-    options.pairs            = numprocs / 2;
-
-    int po_ret = process_options(argc, argv);
-
-    if (PO_OKAY == po_ret && NONE != options.accel) {
-        if (init_accel()) {
-            fprintf(stderr, "Error initializing device\n");
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    if(options.pairs > (numprocs / 2)) {
-        po_ret = PO_BAD_USAGE;
-    }
+    po_ret = process_options(argc, argv);
 
     if (0 == rank) {
         switch (po_ret) {
             case PO_CUDA_NOT_AVAIL:
                 fprintf(stderr, "CUDA support not enabled.  Please recompile "
                         "benchmark with CUDA support.\n");
+                break;
+            case PO_ROCM_NOT_AVAIL:
+                fprintf(stderr, "ROCM support not enabled.  Please recompile "
+                        "benchmark with ROCM support.\n");
                 break;
             case PO_OPENACC_NOT_AVAIL:
                 fprintf(stderr, "OPENACC support not enabled.  Please "
@@ -85,6 +77,7 @@ int main(int argc, char *argv[])
 
     switch (po_ret) {
         case PO_CUDA_NOT_AVAIL:
+        case PO_ROCM_NOT_AVAIL:
         case PO_OPENACC_NOT_AVAIL:
         case PO_BAD_USAGE:
             MPI_CHECK(MPI_Finalize());
@@ -97,21 +90,8 @@ int main(int argc, char *argv[])
             break;
     }
 
-    if (posix_memalign((void**)&s_buf, align_size, options.max_message_size)) {
-        fprintf(stderr, "Error allocating host memory\n");
-        return EXIT_FAILURE;
-    }
-
-    if (posix_memalign((void**)&r_buf, align_size, options.max_message_size)) {
-        fprintf(stderr, "Error allocating host memory\n");
-        return EXIT_FAILURE;
-    }
-
-    memset(s_buf, 0, options.max_message_size);
-    memset(r_buf, 0, options.max_message_size);
-
-    if(numprocs < 2) {
-        if(rank == 0) {
+    if (numprocs < 2) {
+        if (0 == rank) {
             fprintf(stderr, "This test requires at least two processes\n");
         }
 
@@ -119,6 +99,24 @@ int main(int argc, char *argv[])
 
         return EXIT_FAILURE;
     }
+
+    if ((0 == options.pairs) || (options.pairs > (numprocs / 2))) {
+        options.pairs = numprocs / 2;
+    }
+
+    if (PO_OKAY == po_ret && NONE != options.accel) {
+        if (init_accel()) {
+            fprintf(stderr, "Error initializing device\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (allocate_memory_mbw_mr(&s_buf, &r_buf, rank, options.pairs)) {
+        MPI_CHECK(MPI_Finalize());
+        exit(EXIT_FAILURE);
+    }
+    set_buffer_mbw_mr(s_buf, rank, options.pairs, options.accel, 0, options.max_message_size);
+    set_buffer_mbw_mr(r_buf, rank, options.pairs, options.accel, 0, options.max_message_size);
 
     if(rank == 0) {
         fprintf(stdout, HEADER);
@@ -183,7 +181,7 @@ int main(int argc, char *argv[])
            fprintf(stdout, "\n");
            fflush(stdout);
        }
-    
+
        for(j = 0, curr_size = options.min_message_size; curr_size <= options.max_message_size; curr_size *= 2, j++) {
            if(rank == 0) {
                fprintf(stdout, "%-7d", curr_size);
@@ -211,25 +209,30 @@ int main(int argc, char *argv[])
 
             for(i = 0; i < WINDOW_SIZES_COUNT; i++) {
                 fprintf(stdout, "  %10d", window_array[i]);
-            }       
+            }
 
             fprintf(stdout, "\n");
             fflush(stdout);
 
             for(c = 0, curr_size = options.min_message_size; curr_size <= options.max_message_size; curr_size *= 2) {
-                fprintf(stdout, "%-7d", curr_size); 
+                fprintf(stdout, "%-7d", curr_size);
 
                 for(i = 0; i < WINDOW_SIZES_COUNT; i++) {
                     double rate = 1e6 * bandwidth_results[c][i] / curr_size;
 
                     fprintf(stdout, "  %10.2f", rate);
-                }       
+                }
 
                 fprintf(stdout, "\n");
                 fflush(stdout);
-                c++;    
+                c++;
             }
-       }
+        }
+
+        for(i = 0; i < log_val; i++) {
+            free(bandwidth_results[i]);
+        }
+        free(bandwidth_results);
    }
 
    else {
@@ -255,12 +258,20 @@ int main(int argc, char *argv[])
                    fprintf(stdout, "%-*d%*.*f\n", 10, curr_size, FIELD_WIDTH,
                            FLOAT_PRECISION, bw);
                }
-           } 
+           }
        }
    }
 
-   free(r_buf);
-   free(s_buf);
+   free_memory_mbw_mr(s_buf, r_buf, rank, options.pairs);
+   free(mbw_request);
+   free(mbw_reqstat);
+
+   if (NONE != options.accel) {
+       if (cleanup_accel()) {
+           fprintf(stderr, "Error cleaning up device\n");
+           exit(EXIT_FAILURE);
+       }
+   }
 
    MPI_CHECK(MPI_Finalize());
 
@@ -328,7 +339,7 @@ double calc_bw(int rank, int size, int num_pairs, int window_size, char *s_buf,
 
     if(rank == 0) {
         double tmp = size / 1e6 * num_pairs ;
-        
+
         sum_time /= num_pairs;
         tmp = tmp *  options.iterations * window_size;
         bw = tmp / sum_time;

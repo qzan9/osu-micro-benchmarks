@@ -349,6 +349,7 @@ int allocate_memory_coll (void ** buffer, size_t size, enum accel_type type);
 void free_buffer (void * buffer, enum accel_type type);
 void set_buffer (void * buffer, enum accel_type type, int data, size_t size);
 void set_buffer_pt2pt (void * buffer, int rank, enum accel_type type, int data, size_t size);
+void set_buffer_mbw_mr (void * buffer, int rank, int num_pairs, enum accel_type type, int data, size_t size);
 int setAccel(char);
 
 /*
@@ -383,8 +384,10 @@ extern CUcontext cuContext;
 
 void usage_mbw_mr();
 int allocate_memory_pt2pt (char **sbuf, char **rbuf, int rank);
+int allocate_memory_mbw_mr (char **sbuf, char **rbuf, int rank, int num_pairs);
 void print_header_pt2pt (int rank, int type);
 void free_memory (void *sbuf, void *rbuf, int rank);
+void free_memory_mbw_mr (void *sbuf, void *rbuf, int rank, int num_pairs);
 void print_header(int rank, int full);
 void allocate_memory_one_sided(int, char **, char **,
                             char **, size_t, enum WINDOW, MPI_Win *);
