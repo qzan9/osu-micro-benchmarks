@@ -158,7 +158,7 @@ calculate_and_print_stats(int rank, int size, int numprocs,
 
 
 enum mpi_req{
-    MAX_REQ_NUM = 1000
+    MAX_REQ_NUM = 4096
 };
 
 #define BW_LOOP_SMALL 100

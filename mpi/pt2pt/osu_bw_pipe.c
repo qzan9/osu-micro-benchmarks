@@ -11,6 +11,9 @@
 
 #include <osu_util.h>
 
+#define CHUNK_MIN  (1<<15)
+#define CHUNK_MAX  (1<<19)
+
 int
 main (int argc, char *argv[])
 {
@@ -107,13 +110,13 @@ main (int argc, char *argv[])
     print_header(myid, BW);
 
     /* Bandwidth test */
-    for (int chunk = 131072; chunk < 2097153; chunk *= 2) {
+    for (int chunk = CHUNK_MIN; chunk <= CHUNK_MAX; chunk *= 2) {
         void *m_buf_1, *m_buf_2;
         HIP_CHECK(hipHostMalloc(&m_buf_1, chunk));
         HIP_CHECK(hipHostMalloc(&m_buf_2, chunk));
 
         if (0 == myid) printf("chunk size: %d\n", chunk);
-        for (size = options.min_message_size; size <= options.max_message_size; size += chunk) {
+        for (size = options.min_message_size; size <= options.max_message_size; size += CHUNK_MAX) {
             window_size = options.window_size;
             set_buffer_pt2pt(s_buf, myid, options.accel, 'a', size);
             set_buffer_pt2pt(r_buf, myid, options.accel, 'b', size);
